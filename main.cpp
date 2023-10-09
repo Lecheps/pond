@@ -51,6 +51,7 @@ struct pix{
     size_t idx;
     pix* downstream;
     std::vector<pix*>upstream;
+    pix* max_upstream;
 };
 
 enum Condition {Upstream,River,Dam};     
@@ -58,34 +59,57 @@ enum Condition {Upstream,River,Dam};
 class Up_condition{
     public:
         virtual bool check(const pix* up, const pix* down) = 0;
+        // virtual void update_condition(float) = 0;
         virtual ~Up_condition() = default; 
-        static float outlet_elevation;
+        // static float outlet_elevation;
+        // static float highest_surrounding_elevation;
+        static bool follow_steepest_path;
+        static pix* outlet;
 };
 
-float Up_condition::outlet_elevation = 0.0;
-    class Up_condition_upstream: public Up_condition {
+// float Up_condition::outlet_elevation = 0.0;
+// float Up_condition::highest_surrounding_elevation;
+bool Up_condition::follow_steepest_path = false;
+pix* Up_condition::outlet = nullptr;
+
+class Up_condition_upstream: public Up_condition {
     public:
         bool check(const pix* up, const pix* down){
             return (up->downstream == down);
         }
+        // void update_condition(float val) {};
+        
+        
 };
 
 class Up_condition_dam: public Up_condition {
     public:
         bool check(const pix* up, const pix* down){
-            return (up->downstream == down && (up->elevation - outlet_elevation) <= 2.0);
+            return (up->downstream == down && (up->elevation - outlet->elevation) <= 2.0);
         }
+        // void update_condition(float val) {outlet_elevation = val;};
+        
 }; 
+
+class Up_condition_river: public Up_condition {
+    public:
+        bool check(const pix* up, const pix* down){
+            return (true);
+        }
+        // void update_condition(float val) {outlet_elevation = val;};
+        Up_condition_river() {follow_steepest_path=true;};
+};
 
 class Creator {
     public:
         virtual std::unique_ptr<Up_condition> create(Condition cond){
             if(Condition::Upstream == cond) return std::make_unique<Up_condition_upstream>();
             if(Condition::Dam == cond) return std::make_unique<Up_condition_dam>();
+            if(Condition::River == cond) return std::make_unique<Up_condition_river>();
             return nullptr;
         }
         virtual ~Creator() = default;
-
+        
 };
 
 
@@ -180,20 +204,33 @@ class Data{
         void get_basin(pix* outlet){
             basin.clear();
             basin.push_back(outlet);
-            cond->outlet_elevation = outlet->elevation;
+            // cond->update_condition(outlet->elevation);
+            cond->outlet = outlet;
             get_all_upstream(outlet);
             std::cout << "Number of upstream pixels for this pixel: " << basin.size() << std::endl;
         }
 
         void get_all_upstream(pix* data){
-            for (auto& i : data->upstream){
-                if (cond->check(i,data)){
-                    basin.push_back(i);
-                    get_all_upstream(i);
-                }
-                
-            }  
-         
+            // float max_surrounding_elev  = std::numeric_limits<float>::min();
+            // for (auto &i: data->upstream){
+            //     if (i->elevation > max_surrounding_elev) max_surrounding_elev = i->elevation; 
+            // }
+            // cond->update_condition(max_surrounding_elev);
+            if (!cond->follow_steepest_path){
+                for (auto& i : data->upstream){
+                    if (cond->check(i,data)){
+                        basin.push_back(i);
+                        // if (cond->update_outlet) data = i;
+                        get_all_upstream(i);
+                    }                
+                } 
+            }
+            else {
+                basin.push_back(data->max_upstream);
+                std::cout << data->idx << " " << data->flowacc << std::endl;
+                if (data->max_upstream != nullptr) get_all_upstream(data->max_upstream);
+            }
+                      
         }
 
         static void set_all_upstream_pixels(){
@@ -202,7 +239,7 @@ class Data{
                     all_data[i].downstream->upstream.push_back(&all_data[i]);
                 } 
                 // pixels[i].set_as_upstream_pixel();
-                }
+            }
         }
 
         
@@ -249,7 +286,7 @@ class Data{
         static pix* all_data;
         std::vector<pix*> basin;
         std::unique_ptr<Creator> creator = std::make_unique<Creator>();
-        std::unique_ptr<Up_condition> cond = creator->create(Condition::Dam);
+        std::unique_ptr<Up_condition> cond = creator->create(Condition::River);
             
 };
 
@@ -420,6 +457,31 @@ int main(){
     elapsed = end - start;
     std::cout << "Elapsed time setting all upstream pixels in seconds: " << elapsed.count() << std::endl;
 
+    
+    start = std::chrono::high_resolution_clock::now();
+    for (auto i = 0; i < num_data; ++i){
+        pix* pt;
+        // float max_elev = std::numeric_limits<float>::min();
+        size_t max_accumulation = 0;
+        if (! all_data[i].upstream.empty()) {
+            for (std::vector<pix*>::iterator j = all_data[i].upstream.begin(); j !=all_data[i].upstream.end(); ++j) {
+                // if ((*j)->elevation > max_elev) pt = *j;
+                if ((*j)->flowacc > max_accumulation) {
+                    pt = *j;
+                    max_accumulation = (*j)->flowacc;
+                }
+            }
+        } else pt = nullptr;
+        
+        all_data[i].max_upstream = pt;
+        
+    }
+    end = std::chrono::high_resolution_clock::now();
+    elapsed = end - start;
+    std::cout << "Elapsed time finding steepest path in seconds: " << elapsed.count() << std::endl;
+    
+    
+    
     // for (size_t i = 0; i < 100; ++i){
     //     std::cout << all_data[i].idx  << std::endl << "\t";
     //     for (auto &j : all_data[i].upstream){
