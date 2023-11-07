@@ -107,7 +107,7 @@ struct pix{
     pix* max_upstream;
 };
 
-enum Condition {Upstream,River,Dam,Dam_curtain};     
+enum Condition {Upstream,River,Dam,Dam_curtain,Dammed_river};     
 
 class Up_condition{
     public:
@@ -115,10 +115,20 @@ class Up_condition{
         virtual ~Up_condition() = default; 
         static bool follow_river;
         static pix* outlet;
+        static double max_depth;
+        static double max_water_level;
+        static double max_dam_length;
+        static void set_outlet(pix* _outlet){
+            outlet = _outlet;
+            max_water_level = outlet->elevation + max_depth;
+        }
 };
 
 bool Up_condition::follow_river = false;
 pix* Up_condition::outlet = nullptr;
+double Up_condition::max_depth=2.0;
+double Up_condition::max_water_level=0;
+double Up_condition::max_dam_length = 0;
 
 class Up_condition_upstream: public Up_condition {
     public:
@@ -130,7 +140,8 @@ class Up_condition_upstream: public Up_condition {
 class Up_condition_dam: public Up_condition {
     public:
         bool check(const pix* up, const pix* down){
-            return (up->downstream == down && (up->elevation - outlet->elevation) <= 4.0);
+            if (up == nullptr) return false;
+            else return (up->downstream == down && (up->elevation - outlet->elevation) <= 4.0);
         }
 }; 
 
@@ -145,7 +156,8 @@ class Up_condition_river: public Up_condition {
     public:
         bool check(const pix* up, const pix* down){
             num_iterations++;
-            if (num_iterations < max_num_upstream_pixels) return true; 
+            if (up == nullptr) {num_iterations = 0; return false;}
+            else if (num_iterations < max_num_upstream_pixels) return true; 
             else {
                 num_iterations = 0;
                 return false;
@@ -156,6 +168,17 @@ class Up_condition_river: public Up_condition {
         uint num_iterations = 0;
 };
 
+class Up_condition_dammed_river: public Up_condition {
+    public:
+        bool check(const pix* up, const pix* down){
+            if (up == nullptr) return false;
+            else if (up->elevation < max_water_level) return true;
+            else return false;
+        }
+        Up_condition_dammed_river() {follow_river=true;};
+};
+
+
 class Creator {
     public:
         virtual std::unique_ptr<Up_condition> create(Condition cond){
@@ -163,6 +186,7 @@ class Creator {
             if(Condition::Dam == cond) return std::make_unique<Up_condition_dam>();
             if(Condition::River == cond) return std::make_unique<Up_condition_river>();
             if(Condition::Dam_curtain == cond) return std::make_unique<Up_condition_dam_curtain>();
+            if(Condition::Dammed_river == cond) return std::make_unique<Up_condition_dammed_river>();
             return nullptr;
         }
         virtual ~Creator() = default;        
@@ -274,16 +298,36 @@ class Data{
 
         void get_basin(pix* outlet){
             basin.clear();
+            auto bla  = get_xy(outlet->idx);
+            if (bla.first==6865 && bla.second==2808){
+                int dummy = 0;
+            }
             basin.push_back(outlet);
-            cond->outlet = outlet;
+            // cond->outlet = outlet;
+            cond->set_outlet(outlet);
             get_all_upstream(outlet);
-            std::cout << "Number of upstream pixels for this pixel: " << basin.size() << std::endl;
+            // std::cout << "Number of upstream pixels for this pixel: " << basin.size() << std::endl;
         }
 
+        std::vector<pix*> get_basin_pix(pix* outlet){
+            // std::vector<pix*> result;
+            // result.push_back(outlet);
+            // cond->outlet = outlet;
+            // get_all_upstream(outlet);
+            basin.clear();
+            basin.push_back(outlet);
+            // cond->outlet = outlet;
+            cond->set_outlet(outlet);
+            get_all_upstream(outlet);
+            return basin;
+        }
+
+
         void get_all_upstream(pix* data){ 
+
             if (!cond->follow_river){
                 for (auto& i : data->upstream){
-                    if (cond->check(i,data)){
+                    if (cond->check(i,data) && i != nullptr){
                         basin.push_back(i);
                         // if (cond->update_outlet) data = i;
                         get_all_upstream(i);
@@ -291,15 +335,24 @@ class Data{
                 } 
             }
             else {
-                basin.push_back(data->max_upstream);
-                auto coord = get_xy(data->idx);
-                // std::cout << data->idx << " " << coord.first << " " << coord.second << " " <<  data->flowacc << std::endl;
-                if (data->max_upstream != nullptr && cond->check(nullptr,nullptr)) get_all_upstream(data->max_upstream);                 
+                
+                // auto coord = get_xy(data->idx);
+                // std::cout << data->idx << " " << coord.first << " " << coord.second << " " <<  data->flowacc << std::endl;´
+                // auto c1 = data->max_upstream;
+                // auto c2 = cond->check(data->max_upstream,data);
+                if (cond->check(data->max_upstream,data)){
+                    basin.push_back(data->max_upstream);
+                    get_all_upstream(data->max_upstream);  
+                }    
+
             }
                       
         }
 
-        std::vector<pix*> get_curtain(pix* outlet, pix* river_upstream, uint max_width=20, uint max_height = 2){
+        std::vector<pix*> get_curtain(pix* outlet, pix* river_upstream){//}, uint max_width=40, uint max_height = 2){
+            cond->set_outlet(outlet);
+            uint max_width = (uint) cond->max_dam_length;
+
             auto start_coord = get_xy(outlet->idx);
             auto end_coord = get_xy(river_upstream->idx);
             int dx = end_coord.first - start_coord.first;
@@ -322,35 +375,62 @@ class Data{
             counterclockwise_perpendicular.second += dx;
             
             //Tracing perpendicular pixels
-            std::cout << "Clockwise" << std::endl;
+            // std::cout << "Clockwise" << std::endl;
             auto clockwise_coordinates = bresenham(start_coord,clockwise_perpendicular);
-            for (auto&i : clockwise_coordinates) std::cout << "(" << i.first << "," << i.second << ")" << std::endl;
-            std::cout << "Counterclockwise" << std::endl;
+            // for (auto&i : clockwise_coordinates) std::cout << "(" << i.first << "," << i.second << ")" << std::endl;
+            // std::cout << "Counterclockwise" << std::endl;
             auto counterclockwise_coordinates = bresenham(start_coord,counterclockwise_perpendicular);
-            for (auto&i : counterclockwise_coordinates) std::cout << "(" << i.first << "," << i.second << ")" << std::endl;
+            // for (auto&i : counterclockwise_coordinates) std::cout << "(" << i.first << "," << i.second << ")" << std::endl;
 
             std::list<pix*> clockwise_pixels, counterclockwise_pixels;
             pix* center = binary_search_pix(get_idx(clockwise_coordinates.begin()->first,clockwise_coordinates.begin()->second)); 
             clockwise_coordinates.pop_front();
             counterclockwise_coordinates.pop_front();
-            for (auto& p : clockwise_coordinates) clockwise_pixels.push_back(binary_search_pix(get_idx(p.first,p.second))); 
-            for (auto& p : counterclockwise_coordinates) counterclockwise_pixels.push_back(binary_search_pix(get_idx(p.first,p.second))); 
-            
-            float valid_height = center->elevation + (float) max_height; 
-            uint squared_dist = max_width * max_width;
+
             std::vector<pix*> result;
+            for (auto& p : clockwise_coordinates){
+                auto dam_pix = binary_search_pix(get_idx(p.first,p.second));
+                if (dam_pix != nullptr) clockwise_pixels.push_back(dam_pix); 
+                else {
+                    result.clear();
+                    return result;
+                }
+
+            } 
+            for (auto& p : counterclockwise_coordinates){
+                auto dam_pix = binary_search_pix(get_idx(p.first,p.second));
+                if (dam_pix != nullptr){
+                    counterclockwise_pixels.push_back(dam_pix); 
+                }
+                else {
+                    result.clear();
+                    return result;
+                }
+                
+                
+            }
+            
+            // float valid_height = center->elevation + (float) max_height; 
+            uint squared_dist = max_width * max_width;
+            
             result.push_back(center);
             for(auto&p : clockwise_pixels){
-                if (p->elevation <= valid_height ){
+                if (p->elevation <= cond->max_water_level ){
                     result.push_back(p);
                 }
+                else break;
             }
+            pix* clockwise_edge = *result.rbegin();
 
             for(auto&p : counterclockwise_pixels){
-                if (p->elevation <= valid_height ){
+                if (p->elevation <= cond->max_water_level ){
                     result.push_back(p);
                 }
+                else break;
             }
+            pix* counterclockwise_edge = *result.rbegin();
+
+            if (squared_distance_pixel(clockwise_edge,counterclockwise_edge) > squared_dist) result.clear();
 
             return result;
 
@@ -476,6 +556,15 @@ class Data{
     void set_condition(Condition _cond){
         cond = creator->create(_cond);
     }
+
+    void set_curtain_height(double height){
+        cond->max_depth = height;
+    }
+
+    void set_curtain_length(double length){
+        cond->max_dam_length = length;
+    }
+
 
     private: 
         static int nrows;
@@ -692,25 +781,88 @@ int main(){
     end = std::chrono::high_resolution_clock::now();
     elapsed = end - start;
     std::cout << "Elapsed time finding upstream pixel with largest flow accumulation in seconds: " << elapsed.count() << std::endl;
-    
-    start = std::chrono::high_resolution_clock::now();
-    // size_t idx = Data::get_idx(940,9310);
-    size_t idx = Data::get_idx(2286,7842);
-    pix* outlet = Data::binary_search_pix(idx);
-    data.set_condition(Condition::Dam);
-    data.get_basin(outlet);
-    end = std::chrono::high_resolution_clock::now();
-    elapsed = end - start;
-    std::cout << "Elapsed time setting upstream pixels in seconds: " << elapsed.count() << std::endl;
-    data.paint_pixels(save_data);
 
+
+
+
+    //Counting the number of valid pixels
     start = std::chrono::high_resolution_clock::now();
+    std::list<pix*> river_pixels;
+    for (auto i=0;i <num_data;++i){
+        if (all_data[i].flowacc > 10000){
+            river_pixels.push_back(&all_data[i]);
+        } 
+    }
+    data.set_condition(Condition::Dammed_river);
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////
+    data.set_curtain_height(3);
+    data.set_curtain_length(50);
+    //////////////////////////////////////////////////////////////////////////////////////////////////
+    
+    // bool display = false;
+    // int num_to_display = 0;
+    std::map<pix*,std::vector<pix*>> dammed_river_segments;
+    for(auto& i: river_pixels){
+        auto values = data.get_basin_pix(i);
+        std::vector<pix*> dammed_river;
+        for (auto &j: values) dammed_river.push_back(j);
+        dammed_river_segments[i] = dammed_river;
+        // if (display){
+        //     std::cout << "outlet " << i->idx << " : ";
+        //     for (auto &j: values) std::cout << j->idx << " ";
+        //     std::cout << std::endl;
+        //     num_to_display++;
+            
+        // }
+        // if (num_to_display > 9) display = false;
+ 
+    }
+
+    std::cout << "Number of river pixels: " << river_pixels.size() << std::endl;
     data.set_condition(Condition::River);
-    data.get_basin(outlet);
+    size_t cnt = 0;
+    for(auto river = dammed_river_segments.cbegin(); river != dammed_river_segments.cend();){
+        // auto bla = data.get_xy(river.first->idx);
+        // std::cout << cnt++ << " : " <<  bla.first << " " << bla.second << " -> ";
+        data.get_basin(river->first);
+        // bla = data.get_xy((*(data.basin).rbegin())->idx);
+        // std::cout << bla.first << " " << bla.second << " " << data.basin.size() << std::endl;
+        auto curtain = data.get_curtain(river->first,*(data.basin.rbegin()));
+        // std::cout << curtain.size() << std::endl;
+        if (curtain.empty()){
+            dammed_river_segments.erase(river++);
+        } 
+        else ++river;
+    }
+
+    std::cout << "Number of river pixels that can have a dam: " << dammed_river_segments.size() << std::endl;
+
     end = std::chrono::high_resolution_clock::now();
     elapsed = end - start;
-    std::cout << "Elapsed time setting upstream pixels in seconds: " << elapsed.count() << std::endl;
-    data.paint_pixels(save_data);
+    std::cout << "Elapsed time finding river upstream pixels for a given curtain height: " << elapsed.count() << std::endl;
+
+
+
+    
+    // start = std::chrono::high_resolution_clock::now();
+    // // size_t idx = Data::get_idx(940,9310);
+    // size_t idx = Data::get_idx(2286,7842);
+    // pix* outlet = Data::binary_search_pix(idx);
+    // data.set_condition(Condition::Dam);
+    // data.get_basin(outlet);
+    // end = std::chrono::high_resolution_clock::now();
+    // elapsed = end - start;
+    // std::cout << "Elapsed time setting upstream pixels in seconds: " << elapsed.count() << std::endl;
+    // data.paint_pixels(save_data);
+
+    // start = std::chrono::high_resolution_clock::now();
+    // data.set_condition(Condition::River);
+    // data.get_basin(outlet);
+    // end = std::chrono::high_resolution_clock::now();
+    // elapsed = end - start;
+    // std::cout << "Elapsed time setting upstream pixels in seconds: " << elapsed.count() << std::endl;
+    // data.paint_pixels(save_data);
 
     
     // auto start_coord = Data::get_xy((*(data.basin.begin()))->idx);
@@ -725,15 +877,15 @@ int main(){
 
 
 
-    auto curtain = data.get_curtain(*(data.basin.begin()),*(data.basin.rbegin()));
+    // auto curtain = data.get_curtain(*(data.basin.begin()),*(data.basin.rbegin()));
 
-    for (auto& p: curtain){
-        save_data[p->idx]=1;
-    }
+    // for (auto& p: curtain){
+    //     save_data[p->idx]=1;
+    // }
 
-    auto save_err = save_dataset->GetRasterBand(1)->RasterIO(GF_Write,0,0,ncols,nrows,
-                                                            (void*) save_data,ncols,nrows
-                                                            ,GDT_Byte,0,0);
+    // auto save_err = save_dataset->GetRasterBand(1)->RasterIO(GF_Write,0,0,ncols,nrows,
+    //                                                         (void*) save_data,ncols,nrows
+    //                                                         ,GDT_Byte,0,0);
 
     
     GDALClose(save_dataset);
