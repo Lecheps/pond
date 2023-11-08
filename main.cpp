@@ -324,7 +324,6 @@ class Data{
 
 
         void get_all_upstream(pix* data){ 
-
             if (!cond->follow_river){
                 for (auto& i : data->upstream){
                     if (cond->check(i,data) && i != nullptr){
@@ -345,13 +344,27 @@ class Data{
                     get_all_upstream(data->max_upstream);  
                 }    
 
+            }                      
+        }
+
+        void get_unique_upstream(pix* data){
+            for (auto&i : data->upstream){
+                if (cond->check(i,data) && i != nullptr){
+                    auto insert = pond_pixels.insert(i);
+                    if (insert.second){
+                        get_unique_upstream(i);
+                    }
+                }
             }
-                      
         }
 
         std::vector<pix*> get_curtain(pix* outlet, pix* river_upstream){//}, uint max_width=40, uint max_height = 2){
             cond->set_outlet(outlet);
             uint max_width = (uint) cond->max_dam_length;
+
+            if (outlet->idx == 1974687){
+                int dummy{0};
+            }
 
             auto start_coord = get_xy(outlet->idx);
             auto end_coord = get_xy(river_upstream->idx);
@@ -405,14 +418,12 @@ class Data{
                 else {
                     result.clear();
                     return result;
-                }
-                
-                
+                }               
             }
             
             // float valid_height = center->elevation + (float) max_height; 
             uint squared_dist = max_width * max_width;
-            
+            result.clear();
             result.push_back(center);
             for(auto&p : clockwise_pixels){
                 if (p->elevation <= cond->max_water_level ){
@@ -430,7 +441,13 @@ class Data{
             }
             pix* counterclockwise_edge = *result.rbegin();
 
-            if (squared_distance_pixel(clockwise_edge,counterclockwise_edge) > squared_dist) result.clear();
+            if (squared_distance_pixel(clockwise_edge,counterclockwise_edge) > squared_dist){
+                result.clear();
+            } 
+            // else {
+            //     int dummy{0};
+            // }
+            
 
             return result;
 
@@ -443,8 +460,19 @@ class Data{
             // out.close();
 
             //Getting the pixels that compose the curtain
-            
-            
+        }
+
+
+        std::set<pix*> pond_pixels;
+        std::set<pix*> get_all_upstream_from_curtain(std::vector<pix*> curtain){
+            pond_pixels.clear();
+            for (auto &i: curtain){
+                auto insert = pond_pixels.insert(i);
+                if (insert.second){
+                    get_unique_upstream(i);                    
+                }
+            }
+            return pond_pixels;
 
         }
 
@@ -529,10 +557,13 @@ class Data{
             i.second += start_coord.second;
         }
 
+
+        //Filling in bresenham results
         auto leading_it = result.begin(), following_it = result.begin();
         leading_it++;
         for (;leading_it!=result.end();++leading_it,++following_it){
-            if ((leading_it->first-following_it->first)!=0 && (leading_it->second - following_it->first) != 0){
+            if ((leading_it->first - following_it->first) !=0  &&
+                (leading_it->second - following_it->second) != 0){
                 result.insert(leading_it, std::make_pair(
                     leading_it->first - (leading_it->first - following_it->first),
                     leading_it->second
@@ -793,21 +824,33 @@ int main(){
             river_pixels.push_back(&all_data[i]);
         } 
     }
+
+
     data.set_condition(Condition::Dammed_river);
 
     //////////////////////////////////////////////////////////////////////////////////////////////////
-    data.set_curtain_height(3);
-    data.set_curtain_length(50);
+    data.set_curtain_height(2.5);
+    data.set_curtain_length(30);
     //////////////////////////////////////////////////////////////////////////////////////////////////
     
     // bool display = false;
     // int num_to_display = 0;
-    std::map<pix*,std::vector<pix*>> dammed_river_segments;
+    // std::map<pix*,std::vector<pix*>> dammed_river_segments;
+    struct Dammed_pixels{
+        std::vector<pix*> river;
+        std::vector<pix*> curtain;
+        std::set<pix*> flooded;
+    } dammed_pixels;
+
+    std::map<pix*,Dammed_pixels> dammed_river_segments; 
     for(auto& i: river_pixels){
         auto values = data.get_basin_pix(i);
-        std::vector<pix*> dammed_river;
-        for (auto &j: values) dammed_river.push_back(j);
-        dammed_river_segments[i] = dammed_river;
+        // std::vector<pix*> dammed_river;
+        // for (auto &j: values) dammed_river.push_back(j);
+        dammed_pixels.river = values;
+        dammed_river_segments[i] = dammed_pixels;//dammed_river;
+
+
         // if (display){
         //     std::cout << "outlet " << i->idx << " : ";
         //     for (auto &j: values) std::cout << j->idx << " ";
@@ -822,27 +865,40 @@ int main(){
     std::cout << "Number of river pixels: " << river_pixels.size() << std::endl;
     data.set_condition(Condition::River);
     size_t cnt = 0;
-    for(auto river = dammed_river_segments.cbegin(); river != dammed_river_segments.cend();){
+    for(auto river = dammed_river_segments.begin(); river != dammed_river_segments.end();){
         // auto bla = data.get_xy(river.first->idx);
         // std::cout << cnt++ << " : " <<  bla.first << " " << bla.second << " -> ";
         data.get_basin(river->first);
         // bla = data.get_xy((*(data.basin).rbegin())->idx);
         // std::cout << bla.first << " " << bla.second << " " << data.basin.size() << std::endl;
-        auto curtain = data.get_curtain(river->first,*(data.basin.rbegin()));
+        auto curtain = data.get_curtain(*(data.basin.begin()),*(data.basin.rbegin()));
         // std::cout << curtain.size() << std::endl;
         if (curtain.empty()){
             dammed_river_segments.erase(river++);
         } 
-        else ++river;
+        else {
+            river->second.curtain = curtain;
+            ++river;
+        }
     }
 
+    data.set_condition(Condition::Dam);
+    auto river = dammed_river_segments.begin();
+    for(auto i = 0; i < 3;++i){
+        river->second.flooded = data.get_all_upstream_from_curtain(river->second.curtain);
+        river++;
+    }
+    
+    
+    // std::set pond_pixels
+   
     std::cout << "Number of river pixels that can have a dam: " << dammed_river_segments.size() << std::endl;
 
     end = std::chrono::high_resolution_clock::now();
     elapsed = end - start;
     std::cout << "Elapsed time finding river upstream pixels for a given curtain height: " << elapsed.count() << std::endl;
 
-
+    
 
     
     // start = std::chrono::high_resolution_clock::now();
