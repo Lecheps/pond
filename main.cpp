@@ -1,16 +1,17 @@
 #include <iostream>
 #include <fstream>
-#include <string>
+// #include <string>
 #include <gdal.h>
 #include <gdal_priv.h>
 #include <map>
-#include <unordered_set>
+// #include <unordered_set>
 #include <set>
 #include <algorithm>
 #include <limits>
 #include <list>
-#include <array>
+// #include <array>
 #include <chrono>
+#include <experimental/iterator>
 
 struct meta{
         std::string file;
@@ -141,7 +142,7 @@ class Up_condition_dam: public Up_condition {
     public:
         bool check(const pix* up, const pix* down){
             if (up == nullptr) return false;
-            else return (up->downstream == down && (up->elevation - outlet->elevation) <= 4.0);
+            else return (up->downstream == down && up->elevation  <= max_water_level);
         }
 }; 
 
@@ -359,6 +360,9 @@ class Data{
         }
 
         std::vector<pix*> get_curtain(pix* outlet, pix* river_upstream){//}, uint max_width=40, uint max_height = 2){
+
+            //We need to make sure that the first element in the vector is outlet.
+
             cond->set_outlet(outlet);
             uint max_width = (uint) cond->max_dam_length;
 
@@ -466,9 +470,10 @@ class Data{
         std::set<pix*> pond_pixels;
         std::set<pix*> get_all_upstream_from_curtain(std::vector<pix*> curtain){
             pond_pixels.clear();
+            cond->set_outlet(curtain[0]);
             for (auto &i: curtain){
                 auto insert = pond_pixels.insert(i);
-                if (insert.second){
+                if (insert.second){                    
                     get_unique_upstream(i);                    
                 }
             }
@@ -596,6 +601,13 @@ class Data{
         cond->max_dam_length = length;
     }
 
+    std::pair<uint,double> get_pond_characteristics(){
+        std::pair<uint,double> result(0,0.0);
+        result.first = (uint) pond_pixels.size();
+        for (auto &i : pond_pixels) result.second += (cond->max_water_level - i->elevation);
+        return result;
+    }
+
 
     private: 
         static int nrows;
@@ -707,9 +719,7 @@ int main(){
     Data data;
     Data::set_band_size(nrows,ncols);
     Data::set_number_valid_elements(num_data);
-    // Data::set_pixels(pixels);
-
-    
+    // Data::set_pixels(pixels);    
     
     pt = first_element;
     uint8_t * const save_data = new uint8_t[num_el];
@@ -829,8 +839,8 @@ int main(){
     data.set_condition(Condition::Dammed_river);
 
     //////////////////////////////////////////////////////////////////////////////////////////////////
-    data.set_curtain_height(2.5);
-    data.set_curtain_length(30);
+    data.set_curtain_height(2);
+    data.set_curtain_length(40);
     //////////////////////////////////////////////////////////////////////////////////////////////////
     
     // bool display = false;
@@ -881,22 +891,61 @@ int main(){
             ++river;
         }
     }
-
-    data.set_condition(Condition::Dam);
-    auto river = dammed_river_segments.begin();
-    for(auto i = 0; i < 3;++i){
-        river->second.flooded = data.get_all_upstream_from_curtain(river->second.curtain);
-        river++;
-    }
-    
-    
-    // std::set pond_pixels
-   
-    std::cout << "Number of river pixels that can have a dam: " << dammed_river_segments.size() << std::endl;
-
     end = std::chrono::high_resolution_clock::now();
     elapsed = end - start;
-    std::cout << "Elapsed time finding river upstream pixels for a given curtain height: " << elapsed.count() << std::endl;
+    
+    std::cout << "Elapsed time finding all curtains: " << elapsed.count() << std::endl;
+    std::cout << "Number of river pixels that can have a dam: " << dammed_river_segments.size() << std::endl;
+    std::cout << "Calculating the size for all the ponds..." << std::endl;
+
+    start = std::chrono::high_resolution_clock::now();
+    data.set_condition(Condition::Dam);
+    auto river = dammed_river_segments.begin();
+    
+    std::ofstream myfile;
+    myfile.open ("results.txt");
+
+    for(auto i = 0; i < dammed_river_segments.size();++i){ //
+        // data.cond->set_outlet(river->first);
+        // std::cout << i << " ";
+         
+        // river->second.flooded = data.get_all_upstream_from_curtain(river->second.curtain);
+        auto pond = data.get_all_upstream_from_curtain(river->second.curtain);
+        auto pond_info = data.get_pond_characteristics();
+        myfile << river->first->idx << "," << pond_info.second << "," << pond_info.first << "\n";
+        // std::copy(river->second.river.begin(), river->second.river.end(),
+            //   std::experimental::make_ostream_joiner(myfile, ","));
+        // for (auto it = river->second.river.begin(); it != river->second.river.end();++it){
+        //     myfile << (*it)->idx;             
+        //     if (it != river->second.river.rbegin() ){
+        //         myfile << ",";
+        //     } 
+        //     myfile << "\n";
+        // }    
+
+        bool first = true;
+        for (auto const& j: river->second.river) {
+        if (first) { first = false; } else { myfile << ","; }
+        myfile << j->idx;
+        }
+        
+        // for(auto&j : river->second.river) myfile << j->idx << ",";
+        myfile << "\n";
+               
+        river++;
+    }
+
+    myfile.close();
+    end = std::chrono::high_resolution_clock::now();
+    elapsed = end - start;
+    std::cout << "Elapsed time finding all ponds: " << elapsed.count() << std::endl;
+
+    
+    
+   
+    
+
+    
 
     
 
