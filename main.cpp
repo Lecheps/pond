@@ -12,6 +12,7 @@
 // #include <array>
 #include <chrono>
 #include <experimental/iterator>
+#include <random>
 
 struct meta{
         std::string file;
@@ -366,9 +367,9 @@ class Data{
             cond->set_outlet(outlet);
             uint max_width = (uint) cond->max_dam_length;
 
-            if (outlet->idx == 1974687){
-                int dummy{0};
-            }
+            // if (outlet->idx == 1974687){
+            //     int dummy{0};
+            // }
 
             auto start_coord = get_xy(outlet->idx);
             auto end_coord = get_xy(river_upstream->idx);
@@ -722,20 +723,21 @@ int main(){
     // Data::set_pixels(pixels);    
     
     pt = first_element;
-    uint8_t * const save_data = new uint8_t[num_el];
-    uint8_t* write_data = save_data;
+    float * const save_data = new float[num_el];
+    float* write_data = save_data;
     for (auto i=0; i<num_el;++i,++pt,++write_data){
-        if (*pt ==  nodata){
-            save_data[i]=-1;
-        }
-        else{
-            save_data[i] = 0;
-        }
+        // if (*pt ==  nodata){
+        //     save_data[i]=-1;
+        // }
+        // else{
+        //     save_data[i] = 0;
+        // }
+        save_data[i] = -1;
     }
 
     //Trying to save to a tiff of bool
     auto driver_tif = GetGDALDriverManager()->GetDriverByName("GTiff");
-    auto save_dataset =  driver_tif->Create("dummy.tif",ncols,nrows,1,GDT_Byte,NULL);
+    auto save_dataset =  driver_tif->Create("dummy.tif",ncols,nrows,1,GDT_Float32,NULL);
     double transform[6];
     tif->GetGeoTransform(transform);
     save_dataset->SetGeoTransform(transform);
@@ -913,6 +915,8 @@ int main(){
         auto pond = data.get_all_upstream_from_curtain(river->second.curtain);
         auto pond_info = data.get_pond_characteristics();
         myfile << river->first->idx << "," << pond_info.second << "," << pond_info.first << "\n";
+        save_data[river->first->idx] = (float) pond_info.second;
+        // std::cout << river->first->idx << " -> " << (float) pond_info.second << std::endl;
         // std::copy(river->second.river.begin(), river->second.river.end(),
             //   std::experimental::make_ostream_joiner(myfile, ","));
         // for (auto it = river->second.river.begin(); it != river->second.river.end();++it){
@@ -941,8 +945,12 @@ int main(){
     std::cout << "Elapsed time finding all ponds: " << elapsed.count() << std::endl;
 
     
+    //Placing dams randomly
+    std::random_device rd;
+    std::mt19937 rng(rd());
+    std::uniform_int_distribution<size_t> gen(0,dammed_river_segments.size());
+
     
-   
     
 
     
@@ -988,9 +996,9 @@ int main(){
     //     save_data[p->idx]=1;
     // }
 
-    // auto save_err = save_dataset->GetRasterBand(1)->RasterIO(GF_Write,0,0,ncols,nrows,
-    //                                                         (void*) save_data,ncols,nrows
-    //                                                         ,GDT_Byte,0,0);
+    auto save_err = save_dataset->GetRasterBand(1)->RasterIO(GF_Write,0,0,ncols,nrows,
+                                                            (void*) save_data,ncols,nrows
+                                                            ,GDT_Float32,0,0);
 
     
     GDALClose(save_dataset);
