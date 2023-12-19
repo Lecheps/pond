@@ -21,7 +21,7 @@ struct meta{
         GDALDataType gdal_type;
         int byte_size;
         meta(std::string _file) : file(_file) {};
-        meta() {};
+        meta() {}; 
         friend std::ostream& operator << (std::ostream& os,const meta &m);
         // meta& operator=(meta &&copy){
         //     // file = std::move(copy.file);
@@ -107,6 +107,7 @@ struct pix{
     pix* downstream;
     std::vector<pix*>upstream;
     pix* max_upstream;
+    bool is_river{false};
 };
 
 enum Condition {Upstream,River,Dam,Dam_curtain,Dammed_river};     
@@ -406,6 +407,7 @@ class Data{
             counterclockwise_coordinates.pop_front();
 
             std::vector<pix*> result;
+            
             for (auto& p : clockwise_coordinates){
                 auto dam_pix = binary_search_pix(get_idx(p.first,p.second));
                 if (dam_pix != nullptr) clockwise_pixels.push_back(dam_pix); 
@@ -430,17 +432,29 @@ class Data{
             uint squared_dist = max_width * max_width;
             result.clear();
             result.push_back(center);
+            //We need to make sure that the curtain does not intersect another river branch
+            size_t dist{0};
             for(auto&p : clockwise_pixels){
+                dist++;
                 if (p->elevation <= cond->max_water_level ){
                     result.push_back(p);
+                }
+                else if (p->is_river){
+                    result.clear();
+                    return result;
                 }
                 else break;
             }
             pix* clockwise_edge = *result.rbegin();
-
+            dist = 0;
             for(auto&p : counterclockwise_pixels){
-                if (p->elevation <= cond->max_water_level ){
+                dist++;
+                if (p->elevation <= cond->max_water_level){
                     result.push_back(p);
+                }
+                else if (p->is_river  ){
+                    result.clear();
+                    return result;
                 }
                 else break;
             }
@@ -834,6 +848,7 @@ int main(){
     for (auto i=0;i <num_data;++i){
         if (all_data[i].flowacc > 10000){
             river_pixels.push_back(&all_data[i]);
+            all_data[i].is_river = true;
         } 
     }
 
